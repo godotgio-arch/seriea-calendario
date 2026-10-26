@@ -1,0 +1,7 @@
+QUANTO PESA IL CALENDARIO - SERIE A 2026/27
+
+Pubblica la cartella tramite repository Git collegato a Netlify (il servizio netlify/functions/fixtures.mjs deve essere distribuito).
+I visitatori non devono importare CSV. Il sito carica automaticamente tutte le 380 partite da Fixture Download. I coefficienti restano personalizzabili e condivisibili.
+
+NOTA: aprire index.html direttamente non garantisce il caricamento automatico perché il browser può bloccare la fonte esterna. Per il sito pubblico è necessaria la pubblicazione su Netlify e l’accesso alla fonte esterna.
+La giornata si può scegliere da 0 a 38, e la classifica per punti è calcolata dai risultati disponibili (non ufficiale in caso di parità).
