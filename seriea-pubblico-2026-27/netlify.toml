@@ -1,3 +1,4 @@
 [build]
+  base = "seriea-pubblico-2026-27"
   publish = "."
   functions = "netlify/functions"
