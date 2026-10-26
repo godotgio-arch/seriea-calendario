@@ -211,12 +211,26 @@ let importedResults={},resultSource='',resultUpdated='';const extraScoresKey='se
 const resultCache=read(extraScoresKey);if(resultCache?.scores){importedResults=resultCache.scores;resultSource='cache precedente';resultUpdated=resultCache.updated||''}
 const previousActualResult=actualResult;
 actualResult=function(m){return parseResult(importedResults[m.home+'|'+m.away])||previousActualResult(m)};
-const existingRenderStandings=renderStandings;
-renderStandings=function(){const rows=standings(),count=fixtures.filter(m=>actualResult(m)).length;
- const all=fixtures.filter(m=>actualResult(m));const avgD=all.length?all.reduce((s,m)=>s+(score(m.home,m)+score(m.away,m))/2,0)/all.length:null;
+// Modello sperimentale di punti attesi basato sulla forza di ENTRAMBE le squadre.
+// Davidson/Bradley-Terry semplificato: parametri illustrativi, NON tarati su storico.
+// Usiamo i coefficienti scelti dall'utente; probabilità dipendono dalla differenza
+// di forza e dal vantaggio casa. Ogni partita dà 3 o 2 punti totali attesi secondo
+// il pareggio. Non usare questa stima come odds o previsione calibrata.
+function matchProbabilities(m){
+ const rH=Number(ratings[m.home]??50),rA=Number(ratings[m.away]??50);
+ const homeAdv=8+26*Math.log(Math.max(.2,away)/Math.max(.2,home));
+ const odds=Math.exp(Math.max(-12,Math.min(12,(rH-rA+homeAdv)/26)));
+ const drawWeight=.8*Math.sqrt(odds),sum=odds+1+drawWeight;
+ return {winH:odds/sum,draw:drawWeight/sum,winA:1/sum};
+}
+function expectedPoints(t,m){const p=matchProbabilities(m);return m.home===t?3*p.winH+p.draw:3*p.winA+p.draw}
+renderStandings=function(){
+ const rows=standings(),completed=fixtures.filter(m=>actualResult(m)),count=completed.length;
  const difficulty=t=>{const g=games(t).filter(m=>actualResult(m));return g.length?g.reduce((s,m)=>s+score(t,m),0)/g.length:null};
- $('standingsStatus').textContent=rows?count+' risultati · '+(resultSource||origin||'calendario')+(resultUpdated?' · verificati '+new Date(resultUpdated).toLocaleString('it-IT'):''):'Risultati reali non disponibili';
- $('standings').innerHTML=rows?'<table><thead><tr><th>#</th><th>Squadra</th><th class="num">Pt</th><th class="num">PG</th><th class="num">DR</th><th class="num" title="Difficoltà media delle partite con risultato">Diff.</th><th class="num" title="Punti ponderati per la difficoltà, normalizzati a partite disputate">Pt corr.</th><th class="num" title="Punti reali meno punti corretti">Δ</th></tr></thead><tbody>'+rows.map((x,i)=>{const d=difficulty(x.t),adj=x.g&&avgD?x.pts*d/avgD:null,delta=adj==null?null:x.pts-adj;return `<tr><td>${i+1}</td><td>${x.t}</td><td class="num"><b>${x.pts}</b></td><td class="num">${x.g}</td><td class="num">${x.gf-x.ga}</td><td class="num">${fmt(d)}</td><td class="num">${fmt(adj)}</td><td class="num" style="color:${delta>0?'#82dfb0':delta<0?'#f8af99':'inherit'}">${delta==null?'—':(delta>0?'+':'')+fmt(delta)}</td></tr>`}).join('')+'</tbody></table><p class="muted-note">Pt corr. = punti × difficoltà affrontata / media campionato. Δ = punti reali − punti corretti. Positivo = rendimento superiore al valore ponderato per difficoltà; non è una previsione statistica.</p>':'<p class="empty">Classifica reale non disponibile dalla fonte. Nessun punto inventato.</p>';
+ const xp=Object.fromEntries(teams.map(t=>[t,0]));
+ for(const m of completed){xp[m.home]+=expectedPoints(m.home,m);xp[m.away]+=expectedPoints(m.away,m)}
+ $('standingsStatus').textContent=rows?count+' risultati · '+(resultSource||origin||'calendario')+(resultUpdated?' · fonte controllata '+new Date(resultUpdated).toLocaleString('it-IT'):''):'Risultati reali non disponibili';
+ $('standings').innerHTML=rows?'<table><thead><tr><th>#</th><th>Squadra</th><th class="num">Pt</th><th class="num">PG</th><th class="num">DR</th><th class="num" title="Difficoltà media delle partite concluse">Diff.</th><th class="num" title="Somma dei punti attesi partita per partita da un modello sperimentale sulle forze delle due squadre">Pt attesi</th><th class="num" title="Punti reali meno punti attesi: positivo = sopra le attese">Δ</th></tr></thead><tbody>'+rows.map((x,i)=>{const d=difficulty(x.t),att=x.g?xp[x.t]:null,delta=att==null?null:x.pts-att;return `<tr><td>${i+1}</td><td>${x.t}</td><td class="num"><b>${x.pts}</b></td><td class="num">${x.g}</td><td class="num">${x.gf-x.ga}</td><td class="num">${fmt(d)}</td><td class="num">${fmt(att)}</td><td class="num" style="color:${delta>0?'#82dfb0':delta<0?'#f8af99':'inherit'}">${delta==null?'—':(delta>0?'+':'')+fmt(delta)}</td></tr>`}).join('')+'</tbody></table><p class="muted-note"><b>Pt attesi</b>: somma dei punti previsti da un modello probabilistico sperimentale per ogni gara disputata, usando il coefficiente della squadra, quello dell’avversaria e il fattore campo. <b>Δ = Pt reali − Pt attesi</b>; positivo indica più punti del previsto. Il modello è indicativo, non ancora calibrato su partite storiche; non sono quote di scommessa.</p>':'<p class="empty">Classifica reale non disponibile dalla fonte. Nessun punto inventato.</p>';
 };
 const prevLeader=renderLeader;renderLeader=function(){if(!loaded){prevLeader();return}const a=+$('difficultyFrom').value,b=+$('difficultyTo').value;if(a>b){$('leaderboard').innerHTML='<p class="empty">La giornata iniziale deve precedere quella finale.</p>';return}const ranking=teams.map(t=>{const m=games(t).filter(m=>m.round>=a&&m.round<=b);return {t,v:m.length?m.reduce((v,m)=>v+score(t,m),0)/m.length:null}}).sort((a,b)=>b.v-a.v);$('leaderboard').innerHTML=`<p class="small">Giornate ${a}–${b}</p><table><thead><tr><th>#</th><th>Squadra</th><th class="num">Difficoltà media</th></tr></thead><tbody>${ranking.map((r,i)=>`<tr><td>${i+1}</td><td>${r.t}</td><td class="num">${fmt(r.v)}</td></tr>`).join('')}</tbody></table>`};
 const prevScenario=renderScenario;
