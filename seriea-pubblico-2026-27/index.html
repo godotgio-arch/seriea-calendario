@@ -8,7 +8,14 @@ main{max-width:1660px;padding:18px 22px 48px}.hero{margin-bottom:10px}.hero h1{f
 /* V7: better fit of fixture table and remove inactive panel */
 #fixtures{max-height:520px;overflow:auto}#fixturesTitle{font-size:15px}
 #predictionGames input.scoreinput{min-width:45px;}
-</style></head><body><main>
+</style><style>
+.sortable-col{cursor:pointer;user-select:none;white-space:nowrap}
+.sortable-col:hover{background:rgba(126,166,210,.12)}
+.sortable-col:focus-visible{outline:2px solid #8ab9ff;outline-offset:-2px}
+.sortable-col[aria-sort="ascending"]::after{content:" ▲";font-size:.7em;opacity:.9}
+.sortable-col[aria-sort="descending"]::after{content:" ▼";font-size:.7em;opacity:.9}
+</style>
+</head><body><main>
 <header class="hero"><div><div class="eyebrow">Serie A · stagione 2026–27</div><h1>Quanto pesa<br>il calendario?</h1><p>Quali squadre hanno affrontato gli avversari più duri? Quali avranno la strada più facile? Scegli la giornata, confronta tutte le squadre e decidi tu quanto vale ogni avversario.</p></div><div class="controls"><button class="primary" id="share">↗ Condividi i coefficienti</button><button id="reset">Ripristina valori</button></div></header>
 <section class="panel"><div class="controls"><div class="field"><label for="club">Squadra</label><select id="club"></select></div><div class="field"><label for="cut">Giornata di riferimento</label><select id="cut"></select></div><div class="field"><label for="homeFactor">Fattore casa</label><select id="homeFactor"><option value="0.9">−10%</option><option value="0.95">−5%</option><option value="1">0%</option><option value="0.85">−15%</option></select></div><div class="field"><label for="awayFactor">Fattore trasferta</label><select id="awayFactor"><option value="1.1">+10%</option><option value="1.05">+5%</option><option value="1">0%</option><option value="1.15">+15%</option></select></div><button id="refresh">↻ Aggiorna risultati</button></div><div id="dataStatus" class="status" aria-live="polite">Caricamento calendario automatico…</div><div id="warning" class="warn" hidden></div></section>
 <div class="layout"><div>
@@ -224,13 +231,37 @@ function matchProbabilities(m){
  return {winH:odds/sum,draw:drawWeight/sum,winA:1/sum};
 }
 function expectedPoints(t,m){const p=matchProbabilities(m);return m.home===t?3*p.winH+p.draw:3*p.winA+p.draw}
+// Per tutti i 380 incontri, ordina per equilibrio delle forze corrette per il campo.
+// Il pareggio viene assegnato al 28% circa: 106 partite su 380.
+function forecastOutcomes(){
+ const sorted=fixtures.map((m,i)=>{
+  const h=Number(ratings[m.home]??50)/Math.max(.2,home);
+  const a=Number(ratings[m.away]??50)/Math.max(.2,away);
+  return {m,i,h,a,gap:Math.abs(h-a)};
+ }).sort((x,y)=>x.gap-y.gap||x.m.round-y.m.round||x.i-y.i);
+ const draws=new Set(sorted.slice(0,Math.round(sorted.length*.28)).map(x=>keyOf(x.m)));
+ const result=new Map();
+ for(const e of sorted)result.set(keyOf(e.m),draws.has(keyOf(e.m))?'X':e.h>=e.a?'1':'2');
+ return result;
+}
 renderStandings=function(){
  const rows=standings(),completed=fixtures.filter(m=>actualResult(m)),count=completed.length;
  const difficulty=t=>{const g=games(t).filter(m=>actualResult(m));return g.length?g.reduce((s,m)=>s+score(t,m),0)/g.length:null};
+ // Pronostico 1-X-2 convenzionale: le 106 gare più equilibrate su 380 (27,9%) sono X.
+ // La quota è calibrata sulla frequenza media dei pareggi, NON sulla probabilità di ogni singola partita.
+ const forecasts=forecastOutcomes();
  const xp=Object.fromEntries(teams.map(t=>[t,0]));
- for(const m of completed){xp[m.home]+=expectedPoints(m.home,m);xp[m.away]+=expectedPoints(m.away,m)}
+ const explanations=Object.fromEntries(teams.map(t=>[t,[]]));
+ for(const m of completed){
+   const result=forecasts.get(keyOf(m));
+   if(!result)continue;
+   xp[m.home]+=result==='1'?3:result==='X'?1:0;
+   xp[m.away]+=result==='2'?3:result==='X'?1:0;
+   explanations[m.home].push(`${m.home}–${m.away}: ${result} (${result==='1'?3:result==='X'?1:0} pt)`);
+   explanations[m.away].push(`${m.home}–${m.away}: ${result} (${result==='2'?3:result==='X'?1:0} pt)`);
+ }
  $('standingsStatus').textContent=rows?count+' risultati · '+(resultSource||origin||'calendario')+(resultUpdated?' · fonte controllata '+new Date(resultUpdated).toLocaleString('it-IT'):''):'Risultati reali non disponibili';
- $('standings').innerHTML=rows?'<table><thead><tr><th>#</th><th>Squadra</th><th class="num">Pt</th><th class="num">PG</th><th class="num">DR</th><th class="num" title="Difficoltà media delle partite concluse">Diff.</th><th class="num" title="Somma dei punti attesi partita per partita da un modello sperimentale sulle forze delle due squadre">Pt attesi</th><th class="num" title="Punti reali meno punti attesi: positivo = sopra le attese">Δ</th></tr></thead><tbody>'+rows.map((x,i)=>{const d=difficulty(x.t),att=x.g?xp[x.t]:null,delta=att==null?null:x.pts-att;return `<tr><td>${i+1}</td><td>${x.t}</td><td class="num"><b>${x.pts}</b></td><td class="num">${x.g}</td><td class="num">${x.gf-x.ga}</td><td class="num">${fmt(d)}</td><td class="num">${fmt(att)}</td><td class="num" style="color:${delta>0?'#82dfb0':delta<0?'#f8af99':'inherit'}">${delta==null?'—':(delta>0?'+':'')+fmt(delta)}</td></tr>`}).join('')+'</tbody></table><p class="muted-note"><b>Pt attesi</b>: somma dei punti previsti da un modello probabilistico sperimentale per ogni gara disputata, usando il coefficiente della squadra, quello dell’avversaria e il fattore campo. <b>Δ = Pt reali − Pt attesi</b>; positivo indica più punti del previsto. Il modello è indicativo, non ancora calibrato su partite storiche; non sono quote di scommessa.</p>':'<p class="empty">Classifica reale non disponibile dalla fonte. Nessun punto inventato.</p>';
+ $('standings').innerHTML=rows?'<table><thead><tr><th>#</th><th>Squadra</th><th class="num">Pt</th><th class="num">PG</th><th class="num">DR</th><th class="num" title="Difficoltà media delle partite concluse">Diff.</th><th class="num" title="Punti derivati dai pronostici discreti 1-X-2, non una media probabilistica">Pt previsti</th><th class="num" title="Punti reali meno punti previsti">Δ</th></tr></thead><tbody>'+rows.map((x,i)=>{const d=difficulty(x.t),att=x.g?xp[x.t]:null,delta=att==null?null:x.pts-att;return `<tr><td>${i+1}</td><td title="${explanations[x.t].join(' • ')}">${x.t}</td><td class="num"><b>${x.pts}</b></td><td class="num">${x.g}</td><td class="num">${x.gf-x.ga}</td><td class="num">${fmt(d)}</td><td class="num" title="${explanations[x.t].join(' • ')}"><b>${att??'—'}</b></td><td class="num" style="color:${delta>0?'#82dfb0':delta<0?'#f8af99':'inherit'}">${delta==null?'—':(delta>0?'+':'')+delta}</td></tr>`}).join('')+'</tbody></table><p class="muted-note"><b>Pt previsti</b>: 3/1/0 per ogni partita già conclusa, secondo il pronostico 1-X-2. Per il pronostico X il modello sceglie le 106 partite più equilibrate delle 380 del campionato (27,9%), tenendo conto dei coefficienti e del campo. <b>Δ = Pt reali − Pt previsti</b>. Passa il cursore sui punti previsti per leggere le previsioni partita per partita. <b>Metodo convenzionale</b>, non probabilità calibrate.</p>':'<p class="empty">Classifica reale non disponibile dalla fonte. Nessun punto inventato.</p>';
 };
 const prevLeader=renderLeader;renderLeader=function(){if(!loaded){prevLeader();return}const a=+$('difficultyFrom').value,b=+$('difficultyTo').value;if(a>b){$('leaderboard').innerHTML='<p class="empty">La giornata iniziale deve precedere quella finale.</p>';return}const ranking=teams.map(t=>{const m=games(t).filter(m=>m.round>=a&&m.round<=b);return {t,v:m.length?m.reduce((v,m)=>v+score(t,m),0)/m.length:null}}).sort((a,b)=>b.v-a.v);$('leaderboard').innerHTML=`<p class="small">Giornate ${a}–${b}</p><table><thead><tr><th>#</th><th>Squadra</th><th class="num">Difficoltà media</th></tr></thead><tbody>${ranking.map((r,i)=>`<tr><td>${i+1}</td><td>${r.t}</td><td class="num">${fmt(r.v)}</td></tr>`).join('')}</tbody></table>`};
 const prevScenario=renderScenario;
@@ -246,4 +277,65 @@ async function refreshResults(){try{const r=await fetch('/.netlify/functions/res
 const origRefresh=refresh;refresh=async function(force=false){await origRefresh(force);await refreshResults()};
 
 render();refresh();setInterval(()=>refreshResults(),15*60*1000);
+
+// V10: ordinamento delle tabelle analitiche senza alterare i risultati o i pronostici.
+// La posizione (#) resta quella della classifica originale anche quando l'utente riordina.
+(function installTableSorting(){
+ const ids=['standings','leaderboard','fixtures','predictionTable'];
+ const state=Object.fromEntries(ids.map(id=>[id,{column:null,ascending:true,table:null}]));
+ const collator=new Intl.Collator('it',{numeric:true,sensitivity:'base'});
+ function val(row,col){
+   const cell=row.cells[col];if(!cell)return {missing:true,numeric:false,value:''};
+   const str=(cell.textContent||'').trim().replace(/\s+/g,' ');
+   if(!str||str==='—'||str==='–')return {missing:true,numeric:false,value:''};
+   const normalized=str.replace(/\s/g,'').replace(/%$/,'').replace(/\./g,'').replace(',','.');
+   if(/^[+−-]?\d+(?:\.\d+)?$/.test(normalized))return {missing:false,numeric:true,value:Number(normalized.replace('−','-'))};
+   return {missing:false,numeric:false,value:str};
+ }
+ function apply(id){
+   const root=document.getElementById(id),s=state[id];if(!root)return;
+   const table=root.querySelector('table');if(!table)return;
+   s.table=table;
+   const heads=table.querySelectorAll('thead th');
+   heads.forEach((th,i)=>{
+     th.classList.add('sortable-col');th.setAttribute('tabindex','0');th.setAttribute('role','button');
+     th.setAttribute('title','Ordina per '+th.textContent.trim());
+     th.setAttribute('aria-sort',s.column===i?(s.ascending?'ascending':'descending'):'none');
+   });
+   if(s.column===null||!table.tBodies.length)return;
+   const body=table.tBodies[0],rows=Array.from(body.rows);
+   const c=s.column,dir=s.ascending?1:-1;
+   rows.sort((a,b)=>{
+     const x=val(a,c),y=val(b,c);
+     if(x.missing!==y.missing)return x.missing?1:-1;
+     if(x.numeric&&y.numeric)return (x.value-y.value)*dir;
+     return collator.compare(String(x.value),String(y.value))*dir;
+   });
+   // Append in one fragment to minimize redraws.
+   const frag=document.createDocumentFragment();rows.forEach(r=>frag.appendChild(r));body.appendChild(frag);
+ }
+ for(const id of ids){
+   const root=document.getElementById(id);if(!root)continue;
+   root.addEventListener('click',ev=>{
+     const th=ev.target.closest('th');if(!th||!root.contains(th))return;
+     const col=Array.from(th.parentElement.cells).indexOf(th),s=state[id];
+     if(col<0)return;
+     if(s.column===col)s.ascending=!s.ascending;
+     else {s.column=col;s.ascending=(col===1||id==='fixtures'&&col===0);}
+     apply(id);
+   });
+   root.addEventListener('keydown',ev=>{
+     if(ev.key!=='Enter'&&ev.key!==' ')return;
+     const th=ev.target.closest('th');if(!th||!root.contains(th))return;
+     ev.preventDefault();th.click();
+   });
+   // A new table arrives after a data update: preserve the selected sort order.
+   const observer=new MutationObserver(()=>{
+     const table=root.querySelector('table');if(table&&table!==state[id].table)apply(id);
+   });
+   observer.observe(root,{childList:true});
+   apply(id);
+ }
+})();
+
 </script></body></html>
